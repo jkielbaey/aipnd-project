@@ -1,0 +1,20 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[dev-packages]
+pylint = "*"
+autopep8 = "*"
+
+[packages]
+pandas = "*"
+sklearn = "*"
+scipy = "*"
+matplotlib = "*"
+jupyter = "*"
+torch = "*"
+torchvision = "*"
+
+[requires]
+python_version = "3.7"
