@@ -27,6 +27,7 @@ def train():
 
     fr.train(args.save_directory, train_loader,
              valid_loader, class_to_idx, args.epochs)
+    fr.test(test_loader)
 
 
 if __name__ == "__main__":
