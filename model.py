@@ -18,6 +18,7 @@ class FlowerRecognizor():
             self.device = torch.device("cuda")
 
         self._create_model(base_model, hidden_units, learning_rate)
+        self.criterion = None
 
         # print(self.model)
 
@@ -131,13 +132,13 @@ class FlowerRecognizor():
         }
         torch.save(model_checkpoint, filepath)
 
-    def _validate(self, valid_loader, criterion):
+    def _validate(self, valid_loader):
         valid_loss = 0
         valid_accuracy = 0
         for images, labels in valid_loader:
             images, labels = images.to(self.device), labels.to(self.device)
             logps = self.model(images)
-            loss = criterion(logps, labels)
+            loss = self.criterion(logps, labels)
 
             valid_loss += loss.item()
 
@@ -152,7 +153,7 @@ class FlowerRecognizor():
 
         self.model.to(self.device)
 
-        criterion = nn.NLLLoss()
+        self.criterion = nn.NLLLoss()
         train_losses, valid_losses = [], []
         model_save_path = save_dir + "/checkpoint.pth"
         self.model.class_to_idx = class_to_idx
@@ -172,7 +173,7 @@ class FlowerRecognizor():
 
                 self.optimizer.zero_grad()
                 logps = self.model(images)
-                loss = criterion(logps, labels)
+                loss = self.criterion(logps, labels)
                 loss.backward()
                 self.optimizer.step()
 
@@ -181,11 +182,9 @@ class FlowerRecognizor():
                     print(f"  Batch {epoch+1}.{epoch_batches}/{epochs}.. done")
 
             else:
-
                 with torch.no_grad():
                     self.model.eval()
-                    valid_loss, valid_accuracy = self._validate(
-                        valid_loader, criterion)
+                    valid_loss, valid_accuracy = self._validate(valid_loader)
                     valid_losses.append(valid_loss)
 
                     self.model.train()
