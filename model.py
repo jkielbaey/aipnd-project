@@ -1,4 +1,4 @@
-import logging
+import time
 from collections import OrderedDict
 
 import torch
@@ -7,18 +7,21 @@ from torchvision import models
 
 
 class FlowerRecognizor():
-    def __init__(self, base_model='densenet121', use_gpu=False):
-        self.log = logging.getLogger(__class__.__name__)
+    def __init__(self, base_model='densenet121', hidden_units=512,
+                 learning_rate=0.005, use_gpu=False):
         self.base_model = base_model
+        self.hidden_units = hidden_units
         self.use_gpu = use_gpu
         if not use_gpu:
             self.device = torch.device("cpu")
         else:
             self.device = torch.device("cuda")
 
-        self._create_model(base_model)
+        self._create_model(base_model, hidden_units, learning_rate)
 
-    def _create_model(self, base_model):
+        # print(self.model)
+
+    def _create_model(self, base_model, hidden_units, learning_rate=0.005):
         supported_base_models = {
             'vgg13': models.vgg13,
             'vgg13_bn': models.vgg13_bn,
@@ -53,18 +56,19 @@ class FlowerRecognizor():
             param.requires_grad = False
 
         self.model.base_model = base_model
+        self.model.hidden_units = hidden_units
         classifier = nn.Sequential(OrderedDict([
-            ('fc1', nn.Linear(input_features, 512)),
+            ('fc1', nn.Linear(input_features, hidden_units)),
             ('relu1', nn.ReLU()),
             ('dropout1', nn.Dropout(0.05)),
-            ('fc3', nn.Linear(512, 102)),
+            ('fc3', nn.Linear(hidden_units, 102)),
             ('output', nn.LogSoftmax(dim=1))
         ]))
 
         self.model.classifier = classifier
 
         self.optimizer = optim.Adam(
-            self.model.classifier.parameters(), lr=0.005)
+            self.model.classifier.parameters(), lr=learning_rate)
 
     def _load_checkpoint(self, model_state_dict, optim_state_dict, class_to_idx):
         self.model.load_state_dict(model_state_dict)
@@ -85,7 +89,10 @@ class FlowerRecognizor():
 
         checkpoint = torch.load(checkpoint_file, map_location='cpu')
 
-        fr = FlowerRecognizor(checkpoint["base_model"], use_gpu)
+        base_model = checkpoint.get("base_model", "densenet121")
+        hidden_units = int(checkpoint.get("hidden_units", 512))
+
+        fr = FlowerRecognizor(base_model, hidden_units, use_gpu)
 
         fr._load_checkpoint(checkpoint['model_state_dict'],
                             checkpoint['optim_state_dict'],
@@ -111,3 +118,87 @@ class FlowerRecognizor():
                         self.model.class_to_idx.items()}
         top_class = [idx_to_class[i] for i in top_class]
         return top_p, top_class
+
+    def _save_model(self, filepath, epochs):
+        print(f"Saving model..")
+        model_checkpoint = {
+            'model_state_dict': self.model.state_dict(),
+            'base_model': self.model.base_model,
+            'class_to_idx': self.model.class_to_idx,
+            'optim_state_dict': self.optimizer.state_dict(),
+            'nr_epochs': epochs,
+            'hidden_units': self.model.hidden_units
+        }
+        torch.save(model_checkpoint, filepath)
+
+    def _validate(self, valid_loader, criterion):
+        valid_loss = 0
+        valid_accuracy = 0
+        for images, labels in valid_loader:
+            images, labels = images.to(self.device), labels.to(self.device)
+            logps = self.model(images)
+            loss = criterion(logps, labels)
+
+            valid_loss += loss.item()
+
+            ps = torch.exp(logps)
+            _, top_class = ps.topk(1, dim=1)
+            equals = top_class == labels.view(*top_class.shape)
+            valid_accuracy += equals.type(torch.FloatTensor).mean()
+
+        return valid_loss/len(valid_loader), valid_accuracy/len(valid_loader)
+
+    def train(self, save_dir, train_loader, valid_loader, class_to_idx, epochs):
+
+        self.model.to(self.device)
+
+        criterion = nn.NLLLoss()
+        train_losses, valid_losses = [], []
+        model_save_path = save_dir + "/checkpoint.pth"
+        self.model.class_to_idx = class_to_idx
+
+        previous_valid_loss = None
+        for epoch in range(epochs):
+            epoch_start = time.time()
+            epoch_train_running_loss = 0
+            epoch_batches = 0
+
+            print(f"Epoch {epoch+1}/{epochs}..")
+
+            for images, labels in train_loader:
+                epoch_batches += 1
+
+                images, labels = images.to(self.device), labels.to(self.device)
+
+                self.optimizer.zero_grad()
+                logps = self.model(images)
+                loss = criterion(logps, labels)
+                loss.backward()
+                self.optimizer.step()
+
+                epoch_train_running_loss += loss.item()
+                if epoch_batches % 10 == 0:
+                    print(f"  Batch {epoch+1}.{epoch_batches}/{epochs}.. done")
+
+            else:
+
+                with torch.no_grad():
+                    self.model.eval()
+                    valid_loss, valid_accuracy = self._validate(
+                        valid_loader, criterion)
+                    valid_losses.append(valid_loss)
+
+                    self.model.train()
+
+                # Save model if it was better.
+                if not previous_valid_loss or valid_loss < previous_valid_loss:
+                    self._save_model(model_save_path, epoch)
+                    previous_valid_loss = valid_loss
+
+            train_losses.append(epoch_train_running_loss/epoch_batches)
+
+            print(f"Epoch {epoch+1}/{epochs}.. "
+                  f"Duration {time.time() - epoch_start:.1f}s.. "
+                  f"Train loss: {epoch_train_running_loss/epoch_batches:.3f}.."
+                  f"Validation loss: {valid_loss:.3f}.. "
+                  f"Validation accuracy: {valid_accuracy:.3f}..")
