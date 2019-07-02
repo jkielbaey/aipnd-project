@@ -149,6 +149,13 @@ class FlowerRecognizor():
 
         return valid_loss/len(valid_loader), valid_accuracy/len(valid_loader)
 
+    def test(self, test_loader):
+        with torch.no_grad():
+            test_loss, test_accuracy = self._validate(test_loader)
+
+        print(f"Test loss: {test_loss:.3f}.. "
+              f"Test accuracy: {100 * test_accuracy:.2f}%..")
+
     def train(self, save_dir, train_loader, valid_loader, class_to_idx, epochs):
 
         self.model.to(self.device)
